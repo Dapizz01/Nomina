@@ -1,0 +1,116 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { metadataService } from '../../src/lib/MetadataService';
+import * as mm from 'music-metadata';
+
+vi.mock('music-metadata', () => ({
+    parseBlob: vi.fn()
+}));
+
+describe('MetadataService', () => {
+    let mockWorker: any;
+
+    beforeEach(() => {
+        global.URL.createObjectURL = vi.fn(() => 'mock-url');
+
+        // Reset singleton
+        (metadataService as any).worker = null;
+
+        let uuidCounter = 0;
+        Object.defineProperty(globalThis, 'crypto', {
+            configurable: true,
+            value: {
+                randomUUID: () => `uuid-${uuidCounter++}`
+            }
+        });
+
+        mockWorker = {
+            postMessage: vi.fn(),
+            onmessage: null,
+            onerror: null
+        };
+        const WorkerMock = vi.fn(function () { return mockWorker; });
+        global.Worker = WorkerMock as any;
+    });
+
+    afterEach(() => {
+        vi.clearAllMocks();
+    });
+    it('should read metadata correctly', async () => {
+        const mockMetadata = {
+            common: {
+                title: 'Test Title',
+                artist: 'Test Artist',
+                album: 'Test Album',
+                genre: ['Test Genre'],
+                year: 2023,
+                track: { no: 1 },
+                picture: [{ data: new Uint8Array([1, 2, 3]), format: 'image/jpeg' }]
+            },
+            format: {
+                container: 'MPEG',
+                duration: 120,
+                bitrate: 320000,
+                sampleRate: 44100,
+                numberOfChannels: 2
+            }
+        };
+
+        vi.mocked(mm.parseBlob).mockResolvedValueOnce(mockMetadata as any);
+
+        const file = new File([''], 'test.mp3', { type: 'audio/mpeg' });
+        const result = await metadataService.read(file);
+
+        expect(result.title).toBe('Test Title');
+        expect(result.artist).toBe('Test Artist');
+        expect(result.album).toBe('Test Album');
+        expect(result.genre).toBe('Test Genre');
+        expect(result.year).toBe(2023);
+        expect(result.track).toBe(1);
+        expect(result.coverArtUrl).toBe('mock-url');
+        expect(result.format).toBe('MPEG');
+        expect(result.duration).toBe(120);
+        expect(result.bitrate).toBe(320);
+        expect(result.sampleRate).toBe(44100);
+        expect(result.channels).toBe(2);
+    });
+
+    it('should resolve write requests successfully', async () => {
+        const testFile = new File([''], 'test.mp3');
+        const writePromise = metadataService.write(testFile, { title: 'New Title' });
+
+        // Resolve manually by triggering worker's onmessage
+        mockWorker.onmessage?.({
+            data: { id: 'uuid-0', type: 'SUCCESS', data: new ArrayBuffer(10) }
+        });
+
+        const result = await writePromise;
+        expect(result).toBeInstanceOf(ArrayBuffer);
+        expect(result.byteLength).toBe(10);
+    });
+
+    it('should reject write requests on error', async () => {
+        const testFile = new File([''], 'test.mp3');
+        const writePromise = metadataService.write(testFile, { title: 'New Title' });
+
+        mockWorker.onmessage?.({
+            data: { id: 'uuid-0', type: 'ERROR', error: 'Worker failed' }
+        });
+
+        await expect(writePromise).rejects.toThrow('Worker failed');
+    });
+
+    it('should initialize a single worker instance', async () => {
+        const file = new File([''], 'test.mp3');
+
+        const p1 = metadataService.write(file, {});
+        const p2 = metadataService.write(file, {});
+
+        // Single Worker instance created
+        expect(global.Worker).toHaveBeenCalledTimes(1);
+
+        mockWorker.onmessage?.({ data: { id: 'uuid-0', type: 'SUCCESS', data: new ArrayBuffer(0) } });
+        mockWorker.onmessage?.({ data: { id: 'uuid-1', type: 'SUCCESS', data: new ArrayBuffer(0) } });
+        await p1;
+        await p2;
+    });
+});

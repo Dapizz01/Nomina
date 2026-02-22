@@ -35,6 +35,7 @@ tests/music/
 
 # Misc
 ARCHITECTURE.md
+artifacts/
 
 # Coverage
 coverage/

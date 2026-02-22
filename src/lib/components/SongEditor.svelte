@@ -108,7 +108,7 @@
                 {#if song.isUpscale === true}
                     <div
                         class="tooltip"
-                        data-tip="Fast Fourier Transform detected no high frequency content, suggesting this file might be upscaled from a lower bitrate lossy source."
+                        data-tip="This file might be upscaled from a lower bitrate lossy source."
                     >
                         <span
                             class="badge badge-warning badge-sm gap-1 font-medium text-warning-content"
@@ -131,7 +131,7 @@
                 {:else if song.isUpscale === false}
                     <div
                         class="tooltip"
-                        data-tip="Fast Fourier Transform detected high frequency content matching the declared bitrate."
+                        data-tip="The declared bitrate is consistent with the audio content."
                     >
                         <span
                             class="badge badge-success badge-sm gap-1 font-medium text-success-content text-white"

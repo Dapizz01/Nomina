@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) =>
                 coverage: {
                     provider: 'v8',
                     reporter: ['text', 'html'],
+                    exclude: ['src/lib/components/icons/**'],
                     // Uncomment these thresholds when you are ready to enforce them in CI!
                     // thresholds: {
                     //    lines: 80,
