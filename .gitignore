@@ -35,3 +35,11 @@ tests/music/
 
 # Misc
 ARCHITECTURE.md
+
+# Coverage
+coverage/
+
+# Playwright artifacts
+playwright-report/
+test-results/
+playwright/.cache/
