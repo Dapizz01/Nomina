@@ -11,10 +11,11 @@ import Metaflac from 'metaflac-js';
 import { ID3Writer } from 'browser-id3-writer';
 
 export type WorkerMessage =
-    | { type: 'WRITE'; file: File; tags: Record<string, any>; id: string };
+    | { type: 'WRITE'; file: File; tags: Record<string, any>; id: string }
+    | { type: 'READ'; file: File; id: string };
 
 export type WorkerResponse =
-    | { type: 'SUCCESS'; data: ArrayBuffer; id: string }
+    | { type: 'SUCCESS'; data: any; id: string }
     | { type: 'ERROR'; error: string; id: string };
 
 self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
@@ -100,6 +101,44 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
             self.postMessage(
                 { type: 'SUCCESS', data: finalBuffer, id },
                 { transfer: [finalBuffer] }
+            );
+        } else if (type === 'READ') {
+            // Using dynamically imported mm since it's a large tree
+            const mm = await import('music-metadata');
+            const metadata = await mm.parseBlob(file);
+            const { common, format } = metadata;
+
+            let pictureData: Uint8Array | null = null;
+            let pictureMime = '';
+
+            if (common.picture && common.picture.length > 0) {
+                const picture = common.picture[0];
+                pictureData = new Uint8Array(picture.data);
+                pictureMime = picture.format;
+            }
+
+            const data = {
+                title: common.title || '',
+                artist: common.artist || '',
+                album: common.album || '',
+                genre: common.genre?.[0] || '',
+                year: common.year || 0,
+                track: common.track?.no || 0,
+                pictureData,
+                pictureMime,
+                format: format.container || file.name.split('.').pop()?.toUpperCase() || 'UNKNOWN',
+                duration: format.duration || 0,
+                bitrate: format.bitrate ? Math.round(format.bitrate / 1000) : 0,
+                sampleRate: format.sampleRate || 0,
+                channels: format.numberOfChannels || 0
+            };
+
+            // Transfer pictureData back if it exists to save structured clone overhead
+            const transferables = pictureData ? [pictureData.buffer] : [];
+
+            self.postMessage(
+                { type: 'SUCCESS', data, id },
+                { transfer: transferables }
             );
         }
     } catch (error: any) {

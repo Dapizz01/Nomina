@@ -1,10 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { metadataService } from '../../src/lib/MetadataService';
-import * as mm from 'music-metadata';
-
-vi.mock('music-metadata', () => ({
-    parseBlob: vi.fn()
-}));
+// We no longer mock music-metadata natively because it's in a worker
 
 describe('MetadataService', () => {
     let mockWorker: any;
@@ -36,29 +32,32 @@ describe('MetadataService', () => {
         vi.clearAllMocks();
     });
     it('should read metadata correctly', async () => {
-        const mockMetadata = {
-            common: {
-                title: 'Test Title',
-                artist: 'Test Artist',
-                album: 'Test Album',
-                genre: ['Test Genre'],
-                year: 2023,
-                track: { no: 1 },
-                picture: [{ data: new Uint8Array([1, 2, 3]), format: 'image/jpeg' }]
-            },
-            format: {
-                container: 'MPEG',
-                duration: 120,
-                bitrate: 320000,
-                sampleRate: 44100,
-                numberOfChannels: 2
-            }
+        const file = new File([''], 'test.mp3', { type: 'audio/mpeg' });
+
+        const readPromise = metadataService.read(file);
+
+        // Simulate worker sending back the parsed metadata object
+        const mockWorkerData = {
+            title: 'Test Title',
+            artist: 'Test Artist',
+            album: 'Test Album',
+            genre: 'Test Genre',
+            year: 2023,
+            track: 1,
+            pictureData: new Uint8Array([1, 2, 3]),
+            pictureMime: 'image/jpeg',
+            format: 'MPEG',
+            duration: 120,
+            bitrate: 320,
+            sampleRate: 44100,
+            channels: 2
         };
 
-        vi.mocked(mm.parseBlob).mockResolvedValueOnce(mockMetadata as any);
+        mockWorker.onmessage?.({
+            data: { id: 'uuid-0', type: 'SUCCESS', data: mockWorkerData }
+        });
 
-        const file = new File([''], 'test.mp3', { type: 'audio/mpeg' });
-        const result = await metadataService.read(file);
+        const result = await readPromise;
 
         expect(result.title).toBe('Test Title');
         expect(result.artist).toBe('Test Artist');

@@ -1,11 +1,12 @@
 import type { WorkerMessage, WorkerResponse } from './workers/metadata.worker';
-import * as mm from 'music-metadata';
 
-// Store pending promises mapped by their unique message ID
-const pendingRequests = new Map<string, { resolve: (val: any) => void; reject: (err: any) => void }>();
-
+/**
+ * Service responsible for communicating with the background Web Worker
+ * to read and write audio metadata asynchronously without blocking the main UI thread.
+ */
 class MetadataService {
 	private worker: Worker | null = null;
+	private pendingRequests = new Map<string, { resolve: (val: any) => void; reject: (err: any) => void }>();
 
 	private initWorker() {
 		if (!this.worker) {
@@ -24,7 +25,7 @@ class MetadataService {
 
 	private handleMessage(e: MessageEvent<WorkerResponse>) {
 		const { id, type } = e.data;
-		const request = pendingRequests.get(id);
+		const request = this.pendingRequests.get(id);
 
 		if (request) {
 			if (type === 'SUCCESS') {
@@ -32,14 +33,14 @@ class MetadataService {
 			} else {
 				request.reject(new Error(e.data.error));
 			}
-			pendingRequests.delete(id);
+			this.pendingRequests.delete(id);
 		}
 	}
 
 	private sendRequest<T>(message: any, transferables: Transferable[] = []): Promise<T> {
 		return new Promise((resolve, reject) => {
 			const id = crypto.randomUUID();
-			pendingRequests.set(id, { resolve, reject });
+			this.pendingRequests.set(id, { resolve, reject });
 
 			const worker = this.initWorker();
 			// Send message to the worker with the Transferable Object array if provided
@@ -49,40 +50,22 @@ class MetadataService {
 
 	/**
 	 * Reads metadata without blocking the main thread.
-	 * Uses music-metadata natively to stream the file headers without memory overhead.
+	 * Handled completely by the background Web Worker.
 	 */
 	async read(file: File) {
 		try {
-			const metadata = await mm.parseBlob(file);
-			const { common, format } = metadata;
+			const data = await this.sendRequest<any>({ type: 'READ', file });
 
+			// Reconstruct the ObjectURL on the main thread since workers cannot create DOM URLs easily
 			let coverArtUrl = '';
-			let pictureData: Uint8Array | null = null;
-			let pictureMime = '';
-
-			if (common.picture && common.picture.length > 0) {
-				const picture = common.picture[0];
-				pictureData = new Uint8Array(picture.data);
-				pictureMime = picture.format;
-				const blob = new Blob([pictureData as any], { type: pictureMime });
+			if (data.pictureData && data.pictureMime) {
+				const blob = new Blob([data.pictureData], { type: data.pictureMime });
 				coverArtUrl = URL.createObjectURL(blob);
 			}
 
 			return {
-				title: common.title || '',
-				artist: common.artist || '',
-				album: common.album || '',
-				genre: common.genre?.[0] || '',
-				year: common.year || 0,
-				track: common.track?.no || 0,
-				coverArtUrl,
-				pictureData,
-				pictureMime,
-				format: format.container || file.name.split('.').pop()?.toUpperCase() || 'UNKNOWN',
-				duration: format.duration || 0,
-				bitrate: format.bitrate ? Math.round(format.bitrate / 1000) : 0,
-				sampleRate: format.sampleRate || 0,
-				channels: format.numberOfChannels || 0
+				...data,
+				coverArtUrl
 			};
 		} catch (error) {
 			console.error('[MetadataService] Error parsing metadata:', error);

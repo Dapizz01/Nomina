@@ -1,8 +1,13 @@
 import { metadataService } from "../MetadataService";
+import { AudioAnalyzer } from "./AudioAnalyzer";
 
 export class Song {
-    fileHandle: any;
-    file: File;
+    /** The directory or file handle object from the File System Access API. */
+    fileHandle: any = null;
+    /** The actual File blob read from disk. */
+    file: File | null = $state(null);
+    /** Derived reactive property for the song's original filename. */
+    name: string = $derived(this.file ? this.file.name : (this.fileHandle?.name || ""));
 
     // Editable Metadata
     title = $state("");
@@ -13,22 +18,38 @@ export class Song {
     track = $state(0);
 
     // Read-only Audio Properties
+    /** Blob URL pointing to the loaded cover art image */
     coverArtUrl = $state("");
+    /** Raw bytes of the image file */
     pictureData: Uint8Array | null = null;
+    /** MIME type of the pictureData (e.g. image/jpeg) */
     pictureMime = "";
+    /** The audio format codec (e.g. FLAC, MP3) */
     format = $state("");
+    /** Length of the audio track in seconds */
     duration = $state(0);
+    /** Average bitrate of the file */
     bitrate = $state(0);
+    /** Audio sample rate in Hz */
     sampleRate = $state(0);
+    /** Number of audio channels */
     channels = $state(0);
+    /** Whether the FFT analysis detected a fake upscale */
     isUpscale = $state<boolean | null>(null);
 
     // State flags
+    /** Flag indicating a save operation is in progress */
     saving = $state(false);
+    /** Flag indicating basic metadata has been read */
+    isMetadataLoaded = $state(false);
+    /** Flag indicating an async metadata read is currently active */
+    isLoadingMetadata = $state(false);
 
-    constructor(fileHandle: any, file: File) {
+    constructor(fileHandle: any, file?: File) {
         this.fileHandle = fileHandle;
-        this.file = file;
+        if (file) {
+            this.file = file;
+        }
     }
 
     static async loadFromFileHandle(fileHandle: any): Promise<Song> {
@@ -38,9 +59,25 @@ export class Song {
         return song;
     }
 
-    async readMetadata() {
+    async loadMetadataIfNeeded(skipAnalysis = false) {
+        if (this.isMetadataLoaded || this.isLoadingMetadata) return;
+        this.isLoadingMetadata = true;
         try {
-            const metadata = await metadataService.read(this.file);
+            if (!this.file) {
+                this.file = await this.fileHandle.getFile();
+            }
+            await this.readMetadata(skipAnalysis);
+            this.isMetadataLoaded = true;
+        } catch (error) {
+            console.error("[Song] Failed to load metadata on demand", error);
+        } finally {
+            this.isLoadingMetadata = false;
+        }
+    }
+
+    async readMetadata(skipAnalysis = false) {
+        try {
+            const metadata = await metadataService.read(this.file!);
             this.title = metadata.title;
             this.artist = metadata.artist;
             this.album = metadata.album;
@@ -56,8 +93,8 @@ export class Song {
             this.sampleRate = metadata.sampleRate;
             this.channels = metadata.channels;
 
-            // Trigger background upscale analysis if appropriate
-            if (this.bitrate >= 256 || this.format === 'flac') {
+            // Trigger background upscale analysis if appropriate and not skipped
+            if (!skipAnalysis && (this.bitrate >= 256 || this.format === 'flac')) {
                 this.analyzeForUpscale();
             }
         } catch (error) {
@@ -67,103 +104,8 @@ export class Song {
     }
 
     async analyzeForUpscale() {
-        try {
-            const audioUrl = URL.createObjectURL(this.file);
-            const audioEl = new Audio(audioUrl);
-
-            const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-            const source = audioCtx.createMediaElementSource(audioEl);
-            const analyser = audioCtx.createAnalyser();
-            const gainNode = audioCtx.createGain();
-
-            // Mute the audio so the user doesn't hear the scan playback
-            gainNode.gain.value = 0;
-
-            analyser.fftSize = 2048;
-            analyser.smoothingTimeConstant = 0.2; // Fast response
-
-            source.connect(analyser);
-            analyser.connect(gainNode);
-            gainNode.connect(audioCtx.destination);
-
-            // Start around 30% into the song
-            const seekTime = Math.max(0, this.duration * 0.3);
-            audioEl.currentTime = seekTime;
-
-            if (audioCtx.state === 'suspended') {
-                await audioCtx.resume();
-            }
-
-            await audioEl.play();
-
-            // Let it play for a bit to gather FFT data
-            await new Promise(resolve => setTimeout(resolve, 800));
-
-            const bufferLength = analyser.frequencyBinCount;
-            const dataArray = new Float32Array(bufferLength);
-            analyser.getFloatFrequencyData(dataArray);
-
-            // Stop playback and cleanup immediately
-            audioEl.pause();
-            audioEl.src = "";
-            audioCtx.close();
-            URL.revokeObjectURL(audioUrl);
-
-            const sampleRate = audioCtx.sampleRate;
-            const nyquist = sampleRate / 2;
-
-            // Compare high bands (>16.5kHz) to mid bands (2kHz - 10kHz)
-            let highBandEnergy = 0;
-            let highBandCount = 0;
-            let midBandEnergy = 0;
-            let midBandCount = 0;
-
-            for (let i = 0; i < bufferLength; i++) {
-                const freq = (i / bufferLength) * nyquist;
-                const db = dataArray[i];
-
-                // WebAudio dB is usually -100 to 0 (sometimes lower). Transform it to a linear-like positive scale.
-                // We use Math.pow to emphasize louder peaks and minimize noise floor.
-                const energy = Math.pow(10, db / 20);
-
-                if (freq > 16500 && freq < 20000) {
-                    highBandEnergy += energy;
-                    highBandCount++;
-                } else if (freq > 2000 && freq < 10000) {
-                    midBandEnergy += energy;
-                    midBandCount++;
-                }
-            }
-
-            if (highBandCount > 0 && midBandCount > 0) {
-                const avgHigh = highBandEnergy / highBandCount;
-                const avgMid = midBandEnergy / midBandCount;
-
-                if (avgMid < 0.0001) {
-                    console.warn(`[Song] FFT read silence (Mid: ${avgMid}). AudioContext might be blocked or file is silent at ${seekTime}s.`);
-                    this.isUpscale = null;
-                    return;
-                }
-
-                // Instead of absolute db thresholds which break depending on the volume of the song,
-                // we look at the raw ratio between the high band and mid band.
-                // Fakes typically completely flatline above 16kHz, resulting in ratios < 0.05
-                // Genuine tracks typically maintain a steady harmonic decay, resulting in ratios > 0.1
-                const ratio = avgHigh / avgMid;
-
-                if (ratio < 0.02) {
-                    this.isUpscale = true; // Strong probability of upscale (sharp frequency cliff)
-                } else {
-                    this.isUpscale = false;
-                }
-
-                console.log(`[Song] Analyzed for upscale. Mid: ${avgMid.toExponential(2)}, High: ${avgHigh.toExponential(2)}, Ratio: ${ratio.toFixed(4)}, Result: ${this.isUpscale ? 'Upscale' : 'Genuine'}`);
-            }
-
-        } catch (error) {
-            console.error("[Song] Failed to analyze for upscaling", error);
-            this.isUpscale = false; // Fallback
-        }
+        if (!this.file) return;
+        this.isUpscale = await AudioAnalyzer.checkIsUpscale(this.file, this.duration);
     }
 
     async verifyPermission() {
@@ -195,7 +137,7 @@ export class Song {
             }
 
             // 1. Delegate heavy audio shifting and tag writing to the Web Worker
-            const newAudioBytes = await metadataService.write(this.file, {
+            const newAudioBytes = await metadataService.write(this.file!, {
                 title: this.title,
                 artist: this.artist,
                 album: this.album,
