@@ -12,11 +12,57 @@ import { ID3Writer } from 'browser-id3-writer';
 
 export type WorkerMessage =
     | { type: 'WRITE'; file: File; tags: Record<string, any>; id: string }
-    | { type: 'READ'; file: File; id: string };
+    | { type: 'READ'; file: File; resolution?: 'THUMBNAIL' | 'FULL'; id: string };
 
 export type WorkerResponse =
     | { type: 'SUCCESS'; data: any; id: string }
     | { type: 'ERROR'; error: string; id: string };
+
+/**
+ * Resizes a raw image buffer down to a maximum boundary box while preserving aspect ratio.
+ * This runs entirely off the main thread to prevent UI freezing and RAM bloat during batch folder loads.
+ */
+async function resizeImage(buffer: Uint8Array, mimeType: string, maxSize = 512): Promise<{ buffer: Uint8Array; mime: string }> {
+    try {
+        const blob = new Blob([buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer], { type: mimeType });
+        const bitmap = await self.createImageBitmap(blob);
+
+        if (bitmap.width <= maxSize && bitmap.height <= maxSize) {
+            // No resizing needed
+            bitmap.close();
+            return { buffer, mime: mimeType };
+        }
+
+        let width = bitmap.width;
+        let height = bitmap.height;
+
+        if (width > height) {
+            height = Math.floor(height * (maxSize / width));
+            width = maxSize;
+        } else {
+            width = Math.floor(width * (maxSize / height));
+            height = maxSize;
+        }
+
+        const canvas = new OffscreenCanvas(width, height);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error("Could not get 2D context for OffscreenCanvas");
+
+        ctx.drawImage(bitmap, 0, 0, width, height);
+        bitmap.close();
+
+        const resizedBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
+        const arrayBuffer = await resizedBlob.arrayBuffer();
+
+        return {
+            buffer: new Uint8Array(arrayBuffer),
+            mime: 'image/jpeg'
+        };
+    } catch (err) {
+        console.warn("[MetadataWorker] Failed to resize cover art image, falling back to original", err);
+        return { buffer, mime: mimeType };
+    }
+}
 
 self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
     const { type, file, id } = e.data;
@@ -113,8 +159,19 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
 
             if (common.picture && common.picture.length > 0) {
                 const picture = common.picture[0];
-                pictureData = new Uint8Array(picture.data);
-                pictureMime = picture.format;
+                const rawBuffer = new Uint8Array(picture.data);
+                const rawMime = picture.format;
+
+                if (e.data.type === 'READ' && e.data.resolution === 'FULL') {
+                    // Skip resizing, provide pristine high-res buffer
+                    pictureData = rawBuffer;
+                    pictureMime = rawMime;
+                } else {
+                    // Dynamically downscale massive embedded JPEGs down to 512x512
+                    const resized = await resizeImage(rawBuffer, rawMime, 512);
+                    pictureData = resized.buffer;
+                    pictureMime = resized.mime;
+                }
             }
 
             const data = {

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { fileSystem } from "./lib/models/FileSystem.svelte";
+  import { workspaceStore } from "./lib/models/workspace/WorkspaceStore.svelte";
+  import { appStore } from "./lib/state/AppStore.svelte";
   import FileExplorerGrid from "./lib/components/explorer/FileExplorerGrid.svelte";
   import BreadcrumbNav from "./lib/components/explorer/BreadcrumbNav.svelte";
   import SongEditor from "./lib/components/editor/SongEditor.svelte";
@@ -21,8 +22,11 @@
 
   <div class="w-full animate-fade-in">
     <BreadcrumbNav />
-    {#if fileSystem.activeSong}
-      <SongEditor song={fileSystem.activeSong} />
+    {#if appStore.activeTrackDraft}
+      <SongEditor
+        draft={appStore.activeTrackDraft}
+        node={appStore.activeTrackNode}
+      />
     {:else}
       <FileExplorerGrid />
     {/if}

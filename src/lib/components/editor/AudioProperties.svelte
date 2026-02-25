@@ -1,9 +1,9 @@
 <script lang="ts">
-    import type { Song } from "../../models/Song.svelte";
+    import type { TrackDraft } from "../../models/track/TrackDraft.svelte";
     import WarningIcon from "../icons/WarningIcon.svelte";
     import CheckIcon from "../icons/CheckIcon.svelte";
 
-    let { song }: { song: Song } = $props();
+    let { draft }: { draft: TrackDraft } = $props();
 
     function formatTime(seconds: number) {
         if (!seconds) return "0:00";
@@ -14,16 +14,13 @@
 </script>
 
 <div class="flex flex-wrap gap-2 mt-1 mb-2 opacity-70">
-    <span class="badge badge-neutral badge-sm">{song.format}</span>
-    <span class="badge badge-neutral badge-sm">{formatTime(song.duration)}</span
+    <span class="badge badge-neutral badge-sm">{draft.format}</span>
+    <span class="badge badge-neutral badge-sm"
+        >{formatTime(draft.duration)}</span
     >
-    {#if song.file}
-        <span class="badge badge-neutral badge-sm"
-            >{Math.round(song.file.size / 1024 / 1024)} MB</span
-        >
-    {/if}
-    {#if song.bitrate}
-        {#if song.isUpscale === true}
+
+    {#if draft.bitrate}
+        {#if draft.isUpscale === true}
             <div
                 class="tooltip tooltip-bottom"
                 data-tip="This file might be upscaled from a lower bitrate lossy source."
@@ -32,10 +29,10 @@
                     class="badge badge-warning badge-sm gap-1 font-medium text-warning-content"
                 >
                     <WarningIcon class="h-3 w-3" />
-                    {song.bitrate} kbps
+                    {draft.bitrate} kbps
                 </span>
             </div>
-        {:else if song.isUpscale === false}
+        {:else if draft.isUpscale === false}
             <div
                 class="tooltip tooltip-bottom"
                 data-tip="The declared bitrate is consistent with the audio content."
@@ -44,18 +41,31 @@
                     class="badge badge-success badge-sm gap-1 font-medium text-success-content text-white"
                 >
                     <CheckIcon class="h-3 w-3" />
-                    {song.bitrate} kbps
+                    {draft.bitrate} kbps
+                </span>
+            </div>
+        {:else if (draft.bitrate >= 256 || draft.format.toLowerCase() === "flac") && draft.isUpscale === null}
+            <div
+                class="tooltip tooltip-bottom"
+                data-tip="Analyzing audio spectrum..."
+            >
+                <span class="badge badge-neutral badge-sm gap-1">
+                    <span
+                        class="loading loading-spinner loading-xs opacity-50 w-3 h-3"
+                    ></span>
+                    {draft.bitrate} kbps
                 </span>
             </div>
         {:else}
-            <span class="badge badge-neutral badge-sm">{song.bitrate} kbps</span
+            <span class="badge badge-neutral badge-sm"
+                >{draft.bitrate} kbps</span
             >
         {/if}
     {/if}
-    {#if song.sampleRate}
-        <span class="badge badge-neutral badge-sm">{song.sampleRate} Hz</span>
+    {#if draft.sampleRate}
+        <span class="badge badge-neutral badge-sm">{draft.sampleRate} Hz</span>
     {/if}
-    {#if song.channels}
-        <span class="badge badge-neutral badge-sm">{song.channels} ch</span>
+    {#if draft.channels}
+        <span class="badge badge-neutral badge-sm">{draft.channels} ch</span>
     {/if}
 </div>

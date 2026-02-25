@@ -4,6 +4,14 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [tailwindcss(), svelte()]
+  plugins: [tailwindcss(), svelte()],
+  resolve: {
+    alias: {
+      $lib: '/src/lib'
+    }
+  },
+  worker: {
+    format: 'es'
+  }
 })
 

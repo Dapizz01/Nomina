@@ -52,9 +52,9 @@ class MetadataService {
 	 * Reads metadata without blocking the main thread.
 	 * Handled completely by the background Web Worker.
 	 */
-	async read(file: File) {
+	async read(file: File, resolution: 'THUMBNAIL' | 'FULL' = 'THUMBNAIL') {
 		try {
-			const data = await this.sendRequest<any>({ type: 'READ', file });
+			const data = await this.sendRequest<any>({ type: 'READ', file, resolution });
 
 			// Reconstruct the ObjectURL on the main thread since workers cannot create DOM URLs easily
 			let coverArtUrl = '';

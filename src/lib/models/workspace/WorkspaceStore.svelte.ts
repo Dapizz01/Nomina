@@ -1,30 +1,33 @@
-import { Song } from "./Song.svelte";
+import { WorkspaceFolder } from './WorkspaceFolder';
+import { WorkspaceTrack } from './WorkspaceTrack';
+import type { WorkspaceNode } from './WorkspaceNode';
 
-export class FileSystem {
-    /** High-level array containing references to user-selected root directories. */
-    rootFolders: any[] = $state([]);
-    /** High-level array containing references to standalone selected audio files. */
-    rootFiles: any[] = $state([]);
-    /** The directory currently being viewed by the user. If null, user is at the Workspace root. */
-    currentDirectoryHandle: any = $state(null);
-    /** Stack of previously visited directory handles to allow backward navigation. */
-    navigationHistory: any[] = $state([]);
-    /** Sub-directories of the currently active directory. */
-    folders: any[] = $state([]);
-    /** Audio files within the currently active directory (or Workspace root). */
-    songs: Song[] = $state([]);
+/**
+ * Handles traversing local directories, requesting permissions, keeping track of history.
+ */
+export class WorkspaceStore {
+    // Top-level workspace items
+    rootFolders: FileSystemDirectoryHandle[] = $state([]);
+    rootFiles: FileSystemFileHandle[] = $state([]);
+
+    // Current navigation state
+    currentDirectoryHandle: FileSystemDirectoryHandle | null = $state(null);
+    navigationHistory: FileSystemDirectoryHandle[] = $state([]);
+
+    // Derived active items for the UI Grid
+    nodes: WorkspaceNode[] = $state([]);
+
     /** Loading flag, used primarily for blocking UI during heavy reads. */
     loading = $state(false);
     /** Holds any runtime error messages to be displayed in the UI. */
     errorMsg = $state("");
-    /** Currently selected song being viewed in the inline editor. */
-    activeSong: Song | null = $state(null);
 
     /**
      * Checks if a given file system handle already exists in a collection.
      */
     private async isDuplicateHandle(newHandle: any, existingCollection: any[]): Promise<boolean> {
         for (const existing of existingCollection) {
+            // @ts-ignore
             if (existing.isSameEntry && await existing.isSameEntry(newHandle)) {
                 return true;
             } else if (existing.name === newHandle.name) {
@@ -124,7 +127,9 @@ export class FileSystem {
             this.loading = true;
             this.errorMsg = "";
 
-            this.navigationHistory.push(this.currentDirectoryHandle);
+            if (this.currentDirectoryHandle) {
+                this.navigationHistory.push(this.currentDirectoryHandle);
+            }
 
             this.currentDirectoryHandle = handle;
             await this.readCurrentDirectory();
@@ -145,95 +150,88 @@ export class FileSystem {
      * Pops the last directory from the history stack and navigates back to it.
      */
     async goBack() {
-        if (this.activeSong) {
-            this.activeSong = null;
+        if (this.navigationHistory.length === 0) {
+            // Reached Virtual Root
+            if (this.currentDirectoryHandle !== null) {
+                this.currentDirectoryHandle = null;
+                await this.readCurrentDirectory();
+            }
             return;
         }
-
-        if (this.navigationHistory.length === 0) return;
 
         try {
             this.loading = true;
             this.errorMsg = "";
-
-            const handle = this.navigationHistory.pop() ?? null;
-            this.currentDirectoryHandle = handle;
+            this.currentDirectoryHandle = this.navigationHistory.pop() ?? null;
             await this.readCurrentDirectory();
         } catch (err: any) {
             console.error("Failed to go back:", err);
-            this.errorMsg = err.message || "Failed to read folder contents.";
+            this.errorMsg = err.message || "Failed to read previous folder.";
         } finally {
             this.loading = false;
         }
     }
 
     /**
-     * Iterates over the entries of the current directory handle, sorting them into `folders` and `songs`.
+     * Instantly navigates back to the virtual root workspace, dropping all history.
+     */
+    async goHome() {
+        if (!this.currentDirectoryHandle) return; // Already home
+
+        try {
+            this.loading = true;
+            this.errorMsg = "";
+            this.navigationHistory = [];
+            this.currentDirectoryHandle = null;
+            await this.readCurrentDirectory();
+        } catch (err: any) {
+            console.error("Failed to go home:", err);
+            this.errorMsg = err.message || "Failed to load workspace.";
+        } finally {
+            this.loading = false;
+        }
+    }
+
+    /**
+     * Reads handles of the currently targeted directory, or the virtual root workspace handles.
      */
     async readCurrentDirectory() {
-        // Cleanup old songs object URLs
-        for (const song of this.songs) {
-            song.destroy();
-        }
-
         if (!this.currentDirectoryHandle) {
             // Virtual Workspace Root
-            this.folders = [...this.rootFolders];
+            const rootNodes: WorkspaceNode[] = [];
 
-            const newSongs = [];
-            for (const entry of this.rootFiles) {
-                try {
-                    const song = new Song(entry);
-                    await song.loadMetadataIfNeeded(true);
-                    newSongs.push(song);
-                } catch (e) {
-                    console.error("Failed to load generic metadata for root song", entry.name, e);
-                }
+            for (const entry of this.rootFolders) {
+                rootNodes.push(new WorkspaceFolder(entry));
             }
 
-            newSongs.sort((a, b) => {
-                const aName = a.title || a.name;
-                const bName = b.title || b.name;
+            for (const entry of this.rootFiles) {
+                const node = new WorkspaceTrack(entry);
+                await node.loadBasicMetadata();
+                rootNodes.push(node);
+            }
+
+            rootNodes.sort((a, b) => {
+                if (a instanceof WorkspaceFolder && b instanceof WorkspaceTrack) return -1;
+                if (a instanceof WorkspaceTrack && b instanceof WorkspaceFolder) return 1;
+                const aName = (a instanceof WorkspaceTrack && a.title) ? a.title : a.name;
+                const bName = (b instanceof WorkspaceTrack && b.title) ? b.title : b.name;
                 return aName.localeCompare(bName);
             });
 
-            this.songs = newSongs;
+            this.nodes = rootNodes;
             return;
         }
 
-        const newFolders = [];
-        const newSongs = [];
+        // Active folder navigation
+        const dirNode = new WorkspaceFolder(this.currentDirectoryHandle);
+        const children = await dirNode.getChildren();
 
-        for await (const entry of this.currentDirectoryHandle.values()) {
-            if (entry.kind === 'directory') {
-                newFolders.push(entry);
-            } else if (entry.kind === 'file') {
-                const name = entry.name.toLowerCase();
-                if (name.match(/\.(mp3|flac|ogg|m4a|wav)$/)) {
-                    // Eagerly load lightweight metadata via the Web Worker
-                    // but defer the heavy AudioContext FFT upscale analysis
-                    try {
-                        const song = new Song(entry);
-                        await song.loadMetadataIfNeeded(true); // Pass flag to skip FFT
-                        newSongs.push(song);
-                    } catch (e) {
-                        console.error("Failed to load generic metadata for song", entry.name, e);
-                    }
-                }
-            }
-        }
+        // Trigger loading thumbnail metadata automatically for files in view
+        const fileNodes = children.filter(child => child instanceof WorkspaceTrack) as WorkspaceTrack[];
+        await Promise.allSettled(fileNodes.map(node => node.loadBasicMetadata()));
 
-        // Sort folders and songs alphabetically
-        newFolders.sort((a, b) => a.name.localeCompare(b.name));
-        newSongs.sort((a, b) => {
-            const aName = a.title || a.name;
-            const bName = b.title || b.name;
-            return aName.localeCompare(bName);
-        });
-
-        this.folders = newFolders;
-        this.songs = newSongs;
+        this.nodes = children;
     }
 }
 
-export const fileSystem = new FileSystem();
+export const workspaceStore = new WorkspaceStore();

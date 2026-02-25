@@ -1,15 +1,14 @@
 <script lang="ts">
-    import type { Song } from "../../models/Song.svelte";
     import MusicIcon from "../icons/MusicIcon.svelte";
 
-    let { song, onclick } = $props<{
-        song: Song;
+    let { node, onclick } = $props<{
+        node: any; // FileNode
         onclick: () => void;
     }>();
 
     // Prefer ID3 title if available, fallback to filename
-    let displayName = $derived(song.title || song.name);
-    let displayArtist = $derived(song.artist || "Unknown Artist");
+    let displayName = $derived(node.title || node.name);
+    let displayArtist = $derived(node.artist || "Unknown Artist");
 </script>
 
 <button
@@ -20,9 +19,12 @@
     <div
         class="h-12 w-12 shrink-0 rounded-lg overflow-hidden bg-base-300 flex items-center justify-center"
     >
-        {#if song.coverArtUrl}
+        {#if node.isLoading}
+            <span class="loading loading-spinner text-base-content/20 w-4 h-4"
+            ></span>
+        {:else if node.thumbnailUrl}
             <img
-                src={song.coverArtUrl}
+                src={node.thumbnailUrl}
                 alt=""
                 class="w-full h-full object-cover"
             />
