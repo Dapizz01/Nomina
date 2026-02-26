@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { metadataService } from '../../src/lib/MetadataService';
+import { metadataService } from '../../src/lib/services/MetadataService';
 // We no longer mock music-metadata natively because it's in a worker
 
 describe('MetadataService', () => {
@@ -74,22 +74,25 @@ describe('MetadataService', () => {
     });
 
     it('should resolve write requests successfully', async () => {
-        const testFile = new File([''], 'test.mp3');
-        const writePromise = metadataService.write(testFile, { title: 'New Title' });
+        const mockHandle = {
+            getFile: vi.fn(),
+            createWritable: vi.fn()
+        } as unknown as FileSystemFileHandle;
+
+        const writePromise = metadataService.write(mockHandle, { title: 'New Title' });
 
         // Resolve manually by triggering worker's onmessage
         mockWorker.onmessage?.({
-            data: { id: 'uuid-0', type: 'SUCCESS', data: new ArrayBuffer(10) }
+            data: { id: 'uuid-0', type: 'SUCCESS', data: null }
         });
 
         const result = await writePromise;
-        expect(result).toBeInstanceOf(ArrayBuffer);
-        expect(result.byteLength).toBe(10);
+        expect(result).toBeNull();
     });
 
     it('should reject write requests on error', async () => {
-        const testFile = new File([''], 'test.mp3');
-        const writePromise = metadataService.write(testFile, { title: 'New Title' });
+        const mockHandle = {} as FileSystemFileHandle;
+        const writePromise = metadataService.write(mockHandle, { title: 'New Title' });
 
         mockWorker.onmessage?.({
             data: { id: 'uuid-0', type: 'ERROR', error: 'Worker failed' }
@@ -99,16 +102,16 @@ describe('MetadataService', () => {
     });
 
     it('should initialize a single worker instance', async () => {
-        const file = new File([''], 'test.mp3');
+        const mockHandle = {} as FileSystemFileHandle;
 
-        const p1 = metadataService.write(file, {});
-        const p2 = metadataService.write(file, {});
+        const p1 = metadataService.write(mockHandle, {});
+        const p2 = metadataService.write(mockHandle, {});
 
         // Single Worker instance created
         expect(global.Worker).toHaveBeenCalledTimes(1);
 
-        mockWorker.onmessage?.({ data: { id: 'uuid-0', type: 'SUCCESS', data: new ArrayBuffer(0) } });
-        mockWorker.onmessage?.({ data: { id: 'uuid-1', type: 'SUCCESS', data: new ArrayBuffer(0) } });
+        mockWorker.onmessage?.({ data: { id: 'uuid-0', type: 'SUCCESS', data: null } });
+        mockWorker.onmessage?.({ data: { id: 'uuid-1', type: 'SUCCESS', data: null } });
         await p1;
         await p2;
     });

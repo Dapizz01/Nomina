@@ -1,5 +1,5 @@
 import type { WorkspaceTrack } from '../workspace/WorkspaceTrack';
-import { metadataService } from "$lib/MetadataService";
+import { metadataService } from "$lib/services/MetadataService";
 import type { TrackMetadata } from './TrackMetadata';
 import type { TrackDraft } from './TrackDraft.svelte';
 import { AudioAnalyzer } from "../AudioAnalyzer";
@@ -60,7 +60,8 @@ export class TrackFileService {
             const file = await trackNode.handle.getFile();
 
             // 1. Delegate heavy audio shifting and tag writing to the Web Worker
-            const newAudioBytes = await metadataService.write(file, {
+            // The worker itself will now open the file stream and write to disk, saving RAM bloat
+            await metadataService.write(trackNode.handle, {
                 title: draft.title,
                 artist: draft.artist,
                 album: draft.album,
@@ -71,14 +72,7 @@ export class TrackFileService {
                 pictureMime: draft.pictureMime,
             });
 
-            // 2. Obtain direct write-access from the browser to the OS File Handle
-            const writable = await trackNode.handle.createWritable();
-
-            // 3. Stream the new audio bytes over the old file, completely in-place.
-            await writable.write(newAudioBytes);
-            await writable.close();
-
-            console.log(`[TrackFileService] Successfully saved metadata directly to disk.`);
+            console.log(`[TrackFileService] Successfully saved metadata directly to disk via Web Worker.`);
 
             // Return the updated metadata
             return draft.toMetadata();

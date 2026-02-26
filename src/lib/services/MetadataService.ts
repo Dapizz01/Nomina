@@ -1,4 +1,4 @@
-import type { WorkerMessage, WorkerResponse } from './workers/metadata.worker';
+import type { WorkerMessage, WorkerResponse } from '../workers/metadata.worker';
 
 /**
  * Service responsible for communicating with the background Web Worker
@@ -11,7 +11,7 @@ class MetadataService {
 	private initWorker() {
 		if (!this.worker) {
 			// Create the worker using Vite's ?worker import suffix
-			this.worker = new Worker(new URL('./workers/metadata.worker.ts', import.meta.url), {
+			this.worker = new Worker(new URL('../workers/metadata.worker.ts', import.meta.url), {
 				type: 'module'
 			});
 
@@ -74,10 +74,10 @@ class MetadataService {
 	}
 
 	/**
-	 * Modifies tags and returns the updated raw file bytes via a Zero-Copy Transferable Buffer.
+	 * Modifies tags and streams the updated file directly to disk inside the Zero-Copy Transferable Buffer Worker.
 	 */
-	async write(file: File, tags: Partial<{ title: string; artist: string; album: string; genre: string; year: number; track: number; pictureData: Uint8Array | null; pictureMime: string }>): Promise<ArrayBuffer> {
-		return this.sendRequest<ArrayBuffer>({ type: 'WRITE', file, tags });
+	async write(fileHandle: FileSystemFileHandle, tags: Partial<{ title: string; artist: string; album: string; genre: string; year: number; track: number; pictureData: Uint8Array | null; pictureMime: string }>): Promise<void> {
+		return this.sendRequest<void>({ type: 'WRITE', fileHandle, tags });
 	}
 }
 

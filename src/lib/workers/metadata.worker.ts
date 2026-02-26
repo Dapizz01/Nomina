@@ -11,7 +11,7 @@ import Metaflac from 'metaflac-js';
 import { ID3Writer } from 'browser-id3-writer';
 
 export type WorkerMessage =
-    | { type: 'WRITE'; file: File; tags: Record<string, any>; id: string }
+    | { type: 'WRITE'; fileHandle: FileSystemFileHandle; tags: Record<string, any>; id: string }
     | { type: 'READ'; file: File; resolution?: 'THUMBNAIL' | 'FULL'; id: string };
 
 export type WorkerResponse =
@@ -65,11 +65,12 @@ async function resizeImage(buffer: Uint8Array, mimeType: string, maxSize = 512):
 }
 
 self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
-    const { type, file, id } = e.data;
+    const { type, id } = e.data;
 
     try {
         if (type === 'WRITE') {
-            const { tags } = e.data;
+            const { tags, fileHandle } = e.data as any;
+            const file = await fileHandle.getFile();
             const fileBuffer = await file.arrayBuffer();
             const format = file.name.split('.').pop()?.toLowerCase();
 
@@ -143,12 +144,13 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
             } else {
                 throw new Error(`Unsupported format for editing: ${format}`);
             }
+            const writable = await fileHandle.createWritable();
+            await writable.write(finalBuffer);
+            await writable.close();
 
-            self.postMessage(
-                { type: 'SUCCESS', data: finalBuffer, id },
-                { transfer: [finalBuffer] }
-            );
+            self.postMessage({ type: 'SUCCESS', data: null, id });
         } else if (type === 'READ') {
+            const { file } = e.data as any;
             // Using dynamically imported mm since it's a large tree
             const mm = await import('music-metadata');
             const metadata = await mm.parseBlob(file);
