@@ -52,11 +52,18 @@ describe('metadata.worker', () => {
 
     it('should process MP3 files, set correct tags, and transfer memory ownership', async () => {
         const mp3File = new File(['dummy mp3 data'], 'song.mp3', { type: 'audio/mp3' });
+        const mockHandle = {
+            getFile: vi.fn(() => Promise.resolve(mp3File)),
+            createWritable: vi.fn(() => Promise.resolve({
+                write: vi.fn(),
+                close: vi.fn()
+            }))
+        };
 
         await (self as any).onmessage({
             data: {
                 type: 'WRITE',
-                file: mp3File,
+                fileHandle: mockHandle,
                 tags: { title: 'New Title', artist: 'New Artist', track: 5 },
                 id: 'mp3-uuid'
             }
@@ -74,31 +81,34 @@ describe('metadata.worker', () => {
         // Verify successful postMessage response
         expect(message.type).toBe('SUCCESS');
         expect(message.id).toBe('mp3-uuid');
-        expect(message.data).toBeInstanceOf(ArrayBuffer);
-        expect(message.data.byteLength).toBe(10);
+        expect(message.data).toBeNull(); // No massive ArrayBuffer sent back!
 
-        // VERIFY MEMORY RELEASE (Transfer ownership to main thread)
-        expect(transferOpts).toBeDefined();
-        expect(transferOpts.transfer).toBeInstanceOf(Array);
-        expect(transferOpts.transfer).toHaveLength(1);
-        expect(transferOpts.transfer[0]).toBe(message.data); // Should pass exact reference for zero-copy
+        // VERIFY DISK WRITE OCCURRED IN THE WORKER
+        expect(mockHandle.createWritable).toHaveBeenCalledTimes(1);
     });
 
     it('should process FLAC files, set correct tags, and transfer memory ownership', async () => {
         const flacFile = new File(['dummy flac data'], 'song.flac', { type: 'audio/flac' });
         const pictureArray = new Uint8Array([255, 0, 0]);
+        const mockHandle = {
+            getFile: vi.fn(() => Promise.resolve(flacFile)),
+            createWritable: vi.fn(() => Promise.resolve({
+                write: vi.fn(),
+                close: vi.fn()
+            }))
+        };
 
         await (self as any).onmessage({
             data: {
                 type: 'WRITE',
-                file: flacFile,
+                fileHandle: mockHandle,
                 tags: { title: 'New FLAC Title', album: 'Awesome Album', pictureData: pictureArray },
                 id: 'flac-uuid'
             }
         });
 
         expect(mockPostMessage).toHaveBeenCalledTimes(1);
-        const [message, transferOpts] = mockPostMessage.mock.calls[0];
+        const [message] = mockPostMessage.mock.calls[0];
 
         // Ensure Metaflac tags were mapped and set correctly
         expect(mockSetTag).toHaveBeenCalledWith('TITLE=New FLAC Title');
@@ -108,11 +118,11 @@ describe('metadata.worker', () => {
 
         expect(message.type).toBe('SUCCESS');
         expect(message.id).toBe('flac-uuid');
-        // Node Buffer converted properly to ArrayBuffer
-        expect(message.data.byteLength).toBe(Buffer.from('mock-flac-data').byteLength);
+        // No buffer sent back
+        expect(message.data).toBeNull();
 
-        // VERIFY MEMORY RELEASE (Transfer ownership to main thread)
-        expect(transferOpts.transfer[0]).toBe(message.data);
+        // VERIFY DISK WRITE OCCURRED IN THE WORKER
+        expect(mockHandle.createWritable).toHaveBeenCalledTimes(1);
     });
 
     it('should handle unsupported formats gracefully', async () => {
@@ -121,7 +131,7 @@ describe('metadata.worker', () => {
         await (self as any).onmessage({
             data: {
                 type: 'WRITE',
-                file: wavFile,
+                fileHandle: { getFile: () => Promise.resolve(wavFile) },
                 tags: { title: 'Wav Title' },
                 id: 'wav-uuid'
             }
@@ -144,7 +154,7 @@ describe('metadata.worker', () => {
         await (self as any).onmessage({
             data: {
                 type: 'WRITE',
-                file: flacFile,
+                fileHandle: { getFile: () => Promise.resolve(flacFile) },
                 tags: { title: 'Broken' },
                 id: 'fail-uuid'
             }
