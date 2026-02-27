@@ -14,7 +14,7 @@ class TrackCache {
      */
     get(name: string, lastModified: number): TrackMetadata | undefined {
         const key = `${name}_${lastModified}`;
-        console.debug(`[TrackCache] Getting metadata for: ${key}`);
+        console.log(`[TrackCache] Getting metadata for: ${key}`);
         return this.cache.get(key);
     }
 
